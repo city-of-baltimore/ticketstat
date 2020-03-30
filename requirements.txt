@@ -1,0 +1,4 @@
+filelock
+pyodbc
+pytest
+tqdm

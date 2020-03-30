@@ -3,7 +3,7 @@ library(tidyverse)
 library(googleVis)
 
 rawparking <- read.csv('anonfile.csv')
-parkingdata <- rawparking %>% select(c("Infraction.Datetime", "Infraction.Text", "Street.Address", "Latitude", "Longitude"))
+parkingdata <- rawparking %>% select(c("Infraction.Datetime", "Infraction.Text", "Street.Address", "Latitude", "Longitude", "violation.Code"))
 parkingdata$Infraction.Datetime <- lubridate::mdy_hm(parkingdata$Infraction.Datetime)
 datemax <- as.Date(parkingdata[which.max(as.Date(parkingdata$Infraction.Datetime)), ]$Infraction.Datetime)
 datemin <- as.Date(parkingdata[which.min(as.Date(parkingdata$Infraction.Datetime)), ]$Infraction.Datetime)
@@ -189,7 +189,7 @@ server <- function(input, output, session) {
         urlTemplate = "//{s}.tiles.mapbox.com/v3/jcheng.map-5ebohr46/{z}/{x}/{y}.png",
         attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>'
       ) %>% 
-      setView(lng = -77.605141, lat = 39.304533, zoom = 14)
+      setView(lng = -76.605141, lat = 39.304533, zoom = 14)
   })
   
   filtereddata <- reactive({
@@ -214,7 +214,7 @@ server <- function(input, output, session) {
       addCircles(
         lat = ~Latitude,
         lng = ~Longitude,
-        radius=~log(Freq)*6, 
+        radius=~Freq*40, 
         weight = 1, 
         color = "#777777",
         fillColor = ~pal(Freq), 
@@ -266,7 +266,7 @@ server <- function(input, output, session) {
         ungroup()
       
       df = data.frame(datetime=seq(from=as.Date(input$graphslider[1]), to=as.Date(input$graphslider[2]), by='day'))
-      
+
       for (type in input$parkingcitationscb){
         x <- talliedparkingdata %>% 
           filter(Infraction.Text==type) %>%

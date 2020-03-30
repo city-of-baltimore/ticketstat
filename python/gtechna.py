@@ -4,14 +4,13 @@ Pulls citation data from the Gtechna site
 NOTE: This has only been lightly tested. If this would be used for anything extensive, there is a lot of fleshing
 out that would need to be done.
 """
-import argparse
 import csv
 import io
-import pyodbc
 import requests
 
 
 class Gtechna:
+    """ Interacts with gtechna to get citation information """
     def __init__(self, base_url="https://baltimore.gtechna.net", username='bseel', password='3Q4J7VgrBZ'):
         self.base_url = base_url
         self.session = requests.Session()
@@ -29,7 +28,7 @@ class Gtechna:
         # Post the payload to the site to log in
         self.session.post("{}/officercc/security/login.jsp".format(self.base_url), data=payload)
 
-    def search(self, filetype='csv', *args):
+    def search(self, *args, filetype='csv'):
         """
         :param filetype: Type of file we should get
         :param args: One or more of the search queries as tuples. Should be in the format
@@ -84,22 +83,19 @@ class Gtechna:
             var1.append(arg[2:3] or '')
             var2.append(arg[3:4] or '')
         data = {
-             'ticketList-f': datatype,
-             'ticketList-fop': operators,
-             'ticketList-v1': var1,
-             'ticketList-v2': var2,
-             'co': ['TICKETNO', 'TICKETSTATUS', 'TICKETPLATEPROVINCE', 'TICKETPLATEPROVINCE', 'INFRACTIONDATE',
-                    'TICKETCREATIONTIME', 'TICKETATTESTAGENTBADGENO', 'TICKETAGENTNAME', 'TICKETAGENTUNIT',
-                    'LOCATIONDISTRICTNAME', 'TICKETINFRACTIONCODE', 'INFRACTIONTEXTEN', 'TICKETFINE', 'LOCATIONCIVICNO',
-                    'LOCATIONDIRECTIONNAMEEN', 'LOCATIONSTREETNAME', 'CLIENTID', 'ISSERVEROWNER', 'CLIENTSOFTWARE',
-                    'TICKETEXPORTDATE'],
-             'ticketList-oo': 'DESC'
+            'ticketList-f': datatype,
+            'ticketList-fop': operators,
+            'ticketList-v1': var1,
+            'ticketList-v2': var2,
+            'co': ['TICKETNO', 'TICKETSTATUS', 'TICKETPLATEPROVINCE', 'TICKETPLATEPROVINCE', 'INFRACTIONDATE',
+                   'TICKETCREATIONTIME', 'TICKETATTESTAGENTBADGENO', 'TICKETAGENTNAME', 'TICKETAGENTUNIT',
+                   'LOCATIONDISTRICTNAME', 'TICKETINFRACTIONCODE', 'INFRACTIONTEXTEN', 'TICKETFINE', 'LOCATIONCIVICNO',
+                   'LOCATIONDIRECTIONNAMEEN', 'LOCATIONSTREETNAME', 'CLIENTID', 'ISSERVEROWNER', 'CLIENTSOFTWARE',
+                   'TICKETEXPORTDATE'],
+            'ticketList-oo': 'DESC'
         }
         filetype = filetype.lower()
-        result_lookup = {'csv': self._get_results_csv,
-                         'xls': self._get_results_xls,
-                         'xml': self._get_results_xml,
-                         'pdf': self._get_results_pdf}
+        result_lookup = {'csv': self._get_results_csv}
         assert filetype in result_lookup.keys(), "Valid file types are {}".format(result_lookup.keys())
 
         self.data = result_lookup[filetype](data)
@@ -116,18 +112,6 @@ class Gtechna:
         data['d-2698956-e'] = 1  # csv mode
         csv_text = self._get_results(data)
         return csv.DictReader(io.StringIO(csv_text.text))
-
-    def _get_results_xls(self, data):
-        data['d-2698956-e'] = 2  # xls mode
-        return self._get_results(data) # TODO: should parse this data
-
-    def _get_results_xml(self, data):
-        data['d-2698956-e'] = 3  # xml mode
-        return self._get_results(data) # TODO: should parse this data
-
-    def _get_results_pdf(self, data):
-        data['d-2698956-e'] = 5  # pdf mode
-        return self._get_results(data) # TODO: We should do something with this data
 
     def _get_results(self, data):
         return self.session.post("https://baltimore.gtechna.net/officercc/seci/ticketList.jsp", data=data)

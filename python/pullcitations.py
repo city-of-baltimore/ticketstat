@@ -8,11 +8,10 @@ import logging
 import math
 import os
 import pickle
+from retrying import retry
+import requests
 
 import pyodbc
-import requests
-from retrying import retry
-
 from gtechna import Gtechna
 
 logging.basicConfig(
@@ -31,11 +30,12 @@ class CitationData(Gtechna):
     def __init__(self):
         super().__init__()
 
+    @staticmethod
     @retry(stop_max_attempt_number=10,
            wait_exponential_multiplier=1000,
            wait_exponential_max=300000,
            retry_on_exception=retry_if_connection_error)
-    def get_geo(self, street_address, cached_geo):
+    def get_geo(street_address, cached_geo):
         """
         Pulls the latitude and longitude of an address, either from the internet, or the cached version
         """
@@ -59,7 +59,11 @@ class CitationData(Gtechna):
         return cached_geo.get(street_address)
 
     def enrich_data(self, pickle_file='geo.pickle'):
-
+        """
+        Formats the data for the database by combining the address fields, date time fields and getting the lat/long
+        :param pickle_file: (string) the pickle file with previous address lookups (optional)
+        :return: None
+        """
         def get_block(num):
             """Rounds a street address number to the block number"""
             if int(num) < 100 or num == '':
@@ -183,11 +187,11 @@ def start_from_cmd_line():
     args = parser.parse_args()
     create_table = True
 
-    cd = CitationData()
+    citations = CitationData()
     for i in range(args.numofdays):
-        dt = datetime.date(args.year, args.month, args.day)-datetime.timedelta(days=i)
-        print("Processing {}".format(dt))
-        cd.insert_data(dt, create_table)
+        insert_date = datetime.date(args.year, args.month, args.day)-datetime.timedelta(days=i)
+        print("Processing {}".format(insert_date))
+        citations.insert_data(insert_date, create_table)
         create_table = False
 
 

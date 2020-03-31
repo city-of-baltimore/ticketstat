@@ -2,3 +2,5 @@ filelock
 pyodbc
 pytest
 tqdm
+retrying
+requests

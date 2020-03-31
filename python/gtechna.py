@@ -11,7 +11,7 @@ import requests
 
 class Gtechna:
     """ Interacts with gtechna to get citation information """
-    def __init__(self, base_url="https://baltimore.gtechna.net", username='bseel', password='3Q4J7VgrBZ'):
+    def __init__(self, username, password, base_url="https://baltimore.gtechna.net"):
         self.base_url = base_url
         self.session = requests.Session()
         self._login(username, password)

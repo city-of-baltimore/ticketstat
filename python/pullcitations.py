@@ -11,6 +11,7 @@ import pickle
 from retrying import retry
 import requests
 
+import creds
 import pyodbc
 from gtechna import Gtechna
 
@@ -27,8 +28,8 @@ def retry_if_connection_error(exception):
 
 class CitationData(Gtechna):
     """Pulls citation data from Gtechna and puts it in the database"""
-    def __init__(self):
-        super().__init__()
+    def __init__(self, username, password):
+        super().__init__(username, password)
 
     @staticmethod
     @retry(stop_max_attempt_number=10,
@@ -187,7 +188,7 @@ def start_from_cmd_line():
     args = parser.parse_args()
     create_table = True
 
-    citations = CitationData()
+    citations = CitationData(creds.USERNAME, creds.PASSWORD)
     for i in range(args.numofdays):
         insert_date = datetime.date(args.year, args.month, args.day)-datetime.timedelta(days=i)
         print("Processing {}".format(insert_date))

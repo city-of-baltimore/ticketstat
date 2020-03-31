@@ -11,8 +11,8 @@ import pickle
 from retrying import retry
 import requests
 
-import creds
 import pyodbc
+import creds
 from gtechna import Gtechna
 
 logging.basicConfig(

@@ -186,11 +186,11 @@ def start_from_cmd_line():
                         help='Optional: Number of days to search, including the start date.')
 
     args = parser.parse_args()
-    create_table = True
+    create_table = False
 
     citations = CitationData(creds.USERNAME, creds.PASSWORD)
     for i in range(args.numofdays):
-        insert_date = datetime.date(args.year, args.month, args.day)-datetime.timedelta(days=i)
+        insert_date = datetime.date(args.year, args.month, args.day) + datetime.timedelta(days=i)
         print("Processing {}".format(insert_date))
         citations.insert_data(insert_date, create_table)
         create_table = False

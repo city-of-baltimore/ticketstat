@@ -32,7 +32,7 @@ class Gtechna:
         """
         :param filetype: Type of file we should get
         :param args: One or more of the search queries as tuples. Should be in the format
-        (TICKETTYPE, OPERATOR, VAL!, VAL2)
+        (TICKETTYPE, OPERATOR, VAL1, VAL2)
 
         For example
         ('TICKETVIEW.TICKETCREATIONTIME', '3/1/2020', '3/7/2020'), ('TICKETVIEW.TICKETINFRACTIONCODE', '46')

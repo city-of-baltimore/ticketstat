@@ -180,3 +180,5 @@ dmypy.json
 .pyre/
 
 /python/.idea/
+
+.idea/

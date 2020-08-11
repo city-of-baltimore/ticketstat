@@ -5,3 +5,4 @@ tqdm
 retrying
 requests
 bs4
+googlemaps

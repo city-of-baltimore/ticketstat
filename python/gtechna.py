@@ -108,7 +108,7 @@ class Gtechna:
         """
         self.search('csv', ('TICKETVIEW.INFRACTIONDATE', '1', date.strftime("%m/%d/%Y")))
 
-    def _get_results_csv(self, data):
+    def _get_results_csv(self, data: dict) -> csv.DictReader:
         data['d-2698956-e'] = 1  # csv mode
         csv_text = self._get_results(data)
         return csv.DictReader(io.StringIO(csv_text.text))

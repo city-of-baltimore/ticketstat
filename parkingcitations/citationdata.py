@@ -1,18 +1,15 @@
 """
 Takes the data from Gtechna and standardizes it
 """
-import argparse
-import datetime
 import logging
 import math
 import os
 import pickle
-import requests
 
 import googlemaps
 import pyodbc
 
-from .creds import GTECHNA_USERNAME, GTECHNA_PASSWORD, GMAPS_API_KEY
+from .creds import GMAPS_API_KEY
 from .gtechna import Gtechna
 
 logging.basicConfig(
@@ -21,30 +18,34 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S')
 
 
-def retry_if_connection_error(exception):
-    """Return True if we should retry (in this case when it's an IOError), False otherwise"""
-    return isinstance(exception, requests.exceptions.ConnectionError)
-
-
 class CitationData(Gtechna):
     """Pulls citation data from Gtechna and puts it in the database"""
 
-    def __init__(self, username, password):
+    def __init__(self, username, password, pickle_filename='geo.pickle'):
         super().__init__(username, password)
         self.data = None
+        self.pickle_filename = pickle_filename
+        self.cached_geo = {}
 
-    @staticmethod
-    def geocode(street_address, cached_geo) -> dict:
+    def __enter__(self):
+        if os.path.exists(self.pickle_filename):
+            with open(self.pickle_filename, 'rb') as pkl:
+                self.cached_geo = pickle.load(pkl)
+
+    def __exit__(self, *a):
+        with open(self.pickle_filename, 'wb') as proc_files:
+            pickle.dump(self.cached_geo, proc_files)
+
+    def geocode(self, street_address) -> dict:
         """
         Pulls the latitude and longitude of an address, either from the internet, or the cached version
-        :param street_address:
-        :param cached_geo:
+        :param street_address: Address to search. Can be anything that would be searched on google maps.
         :return: Dictionary with the keys 'Latitude', 'Longitude', 'Street Address', 'Street Num', 'Street Name',
         'Neighborhood'
         """
         gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
-        if not cached_geo.get(street_address):
+        if not self.cached_geo.get(street_address):
             logging.info("Get address %s", street_address)
             geocode_result = gmaps.geocode(street_address)
 
@@ -55,24 +56,24 @@ class CitationData(Gtechna):
 
             ret = {'Latitude': geocode_result["geometry"]["location"]["lat"],
                    'Longitude': geocode_result["geometry"]["location"]["lng"],
-                   'Street Address': geocode_result["formatted_address"]}
+                   'Street Address': geocode_result["formatted_address"], "Street Num": "", "Street Name": "",
+                   "Neighborhood": ""}
 
             for component in geocode_result["address_components"]:
-                if "street_no" in component["types"]:
-                    ret["Street Num"] = component["long_name"]
+                if "street_number" in component["types"]:
+                    ret["Street Num"] = component["short_name"]
                 elif "route" in component["types"]:
-                    ret["Street Name"] = component["long_name"]
+                    ret["Street Name"] = component["short_name"]
                 if "neighborhood" in component["types"]:
-                    ret["Neighborhood"] = component["long_name"]
+                    ret["Neighborhood"] = component["short_name"]
 
-            cached_geo[street_address] = ret
+            self.cached_geo[street_address] = ret
             return ret
-        return cached_geo.get(street_address)
+        return self.cached_geo.get(street_address)
 
-    def enrich_data(self, pickle_file='geo.pickle'):
+    def enrich_data(self):
         """
         Formats the data for the database by combining the address fields, date time fields and getting the lat/long
-        :param pickle_file: (string) the pickle file with previous address lookups (optional)
         :return: None
         """
 
@@ -81,8 +82,6 @@ class CitationData(Gtechna):
             if int(num) < 100 or num == '':
                 return 1
             return int(math.floor(int(num) / 100) * 100)
-
-        cached_geo = pickle.load(open(pickle_file, "rb")) if os.path.isfile(pickle_file) else {}
 
         processed_data = []
         for row in self.data:
@@ -95,12 +94,8 @@ class CitationData(Gtechna):
             street_addr = "{num} {dir}{street}".format(num=streetnum if streetnum != '0' else 1,
                                                        dir="{} ".format(direction) if direction else "",
                                                        street=street)
-            # The Jones Falls Expressway lots show up as 400 lot jfa or 500 lot jfb, which doesn't geocode
-            if '00 lot jf' in street_addr.lower():
-                geo = self.geocode('400 Saratoga St, Baltimore, Maryland', cached_geo)
-            else:
-                address = "{}, Baltimore, Maryland".format(street_addr)
-                geo = self.geocode(address, cached_geo)
+            address = "{}, Baltimore, Maryland".format(street_addr)
+            geo = self.geocode(address)
 
             if geo['Latitude'] < 39.1 or geo['Latitude'] > 39.4 or geo['Longitude'] > -76.5 or geo['Longitude'] < -76.8:
                 logging.warning("Got lat/long from outside Baltimore City: %s/%s", geo['Latitude'], geo['Longitude'])
@@ -112,7 +107,6 @@ class CitationData(Gtechna):
             processed_data.append(row)
 
         self.data = processed_data
-        pickle.dump(cached_geo, open(pickle_file, "wb"))
 
     def insert_data(self, search_date, create_table=False):
         """
@@ -140,8 +134,8 @@ class CitationData(Gtechna):
             [ClientId] [varchar](20) NULL,
             [Server] [varchar](max) NULL,
             [Software] [varchar](24) NULL,
-            [Export_Date] [datetime] NULL,
-            [Infraction_Datetime] [datetime] NULL,
+            [Export_Date] [datetime2] NULL,
+            [Infraction_Datetime] [datetime2] NULL,
             [Street_No] [varchar](20) NULL,
             [Street_Name] [varchar](50) NULL,
             [Neighborhood] [varchar](max) NULL,
@@ -169,55 +163,21 @@ class CitationData(Gtechna):
             return
 
         cursor.executemany("""
-        MERGE ticketstat USING (
-        VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ) AS vals (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post, Violation_Code,
-        Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime, Street_Address,
-        Latitude, Longitude)
-        ON (ticketstat.Ticket_No = vals.Ticket_No AND
-            ticketstat.Violation_Code = vals.Violation_Code)
-        WHEN NOT MATCHED THEN
-            INSERT (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
-                Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
-                Infraction_Datetime, Street_Address, Latitude, Longitude)
-            VALUES (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
-                Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
-                Infraction_Datetime, Street_Address, Latitude, Longitude);
-        """, insert_data)
+            MERGE ticketstat USING (
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) AS vals (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post, Violation_Code,
+            Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime, Street_No,
+            Street_Name, Neighborhood, Street_Address, Latitude, Longitude)
+            ON (ticketstat.Ticket_No = vals.Ticket_No AND
+                ticketstat.Violation_Code = vals.Violation_Code)
+            WHEN NOT MATCHED THEN
+                INSERT (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
+                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
+                    Infraction_Datetime, Street_No, Street_Name, Neighborhood, Street_Address, Latitude, Longitude)
+                VALUES (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
+                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
+                    Infraction_Datetime, Street_No, Street_Name, Neighborhood, Street_Address, Latitude, Longitude);
+            """, insert_data)
 
         cursor.commit()
-
-
-def start_from_cmd_line():
-    """
-    Main function
-    """
-    yesterday = datetime.date.today() - datetime.timedelta(days=1)
-    parser = argparse.ArgumentParser(description='Pulls parking citation data from GTechna, geocodes, and puts it in '
-                                                 'our internal database')
-    parser.add_argument('-m', '--month', type=int, default=yesterday.month,
-                        help=('Optional: Month of date we should start searching on (IE: 10 for Oct). Defaults to all '
-                              'days if not specified'))
-    parser.add_argument('-d', '--day', type=int, default=yesterday.day,
-                        help=('Optional: Day of date we should start searching on (IE: 5). Defaults to all days if '
-                              'not specified'))
-    parser.add_argument('-y', '--year', type=int, default=yesterday.year,
-                        help=('Optional: Year of date we should start searching on (IE: 2020). Defaults to all days '
-                              'if not specified'))
-    parser.add_argument('-n', '--numofdays', default=1, type=int,
-                        help='Optional: Number of days to search, including the start date.')
-    parser.add_argument('-c', '--create_table', action='store_true',
-                        help='Creates the database table. Only needed on first run')
-
-    args = parser.parse_args()
-
-    citations = CitationData(GTECHNA_USERNAME, GTECHNA_PASSWORD)
-    for i in range(args.numofdays):
-        insert_date = datetime.date(args.year, args.month, args.day) + datetime.timedelta(days=i)
-        print("Processing {}".format(insert_date))
-        citations.insert_data(insert_date, args.create_table)
-
-
-if __name__ == '__main__':
-    start_from_cmd_line()

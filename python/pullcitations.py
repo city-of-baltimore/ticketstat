@@ -10,9 +10,10 @@ import pickle
 import requests
 
 import googlemaps
-import creds
 import pyodbc
-from gtechna import Gtechna
+
+from .creds import GTECHNA_USERNAME, GTECHNA_PASSWORD, GMAPS_API_KEY
+from .gtechna import Gtechna
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',
@@ -41,7 +42,7 @@ class CitationData(Gtechna):
         :return: Dictionary with the keys 'Latitude', 'Longitude', 'Street Address', 'Street Num', 'Street Name',
         'Neighborhood'
         """
-        gmaps = googlemaps.Client(key=creds.API_KEY)
+        gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
         if not cached_geo.get(street_address):
             logging.info("Get address %s", street_address)
@@ -211,7 +212,7 @@ def start_from_cmd_line():
 
     args = parser.parse_args()
 
-    citations = CitationData(creds.USERNAME, creds.PASSWORD)
+    citations = CitationData(GTECHNA_USERNAME, GTECHNA_PASSWORD)
     for i in range(args.numofdays):
         insert_date = datetime.date(args.year, args.month, args.day) + datetime.timedelta(days=i)
         print("Processing {}".format(insert_date))

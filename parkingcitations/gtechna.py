@@ -26,7 +26,9 @@ class Gtechna:
         }
 
         # Post the payload to the site to log in
-        self.session.post("{}/officercc/security/login.jsp".format(self.base_url), data=payload)
+        resp = self.session.post("{}/officercc/security/login.jsp".format(self.base_url), data=payload)
+        if "Wrong User Name or Password" in resp.text:
+            raise Exception("Invalid username or password")
 
     def search(self, *args, filetype='csv'):
         """

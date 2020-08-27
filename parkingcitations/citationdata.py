@@ -1,16 +1,18 @@
 """
 Takes the data from Gtechna and standardizes it
 """
+import json
 import logging
-import math
 import os
 import pickle
+import requests
 
-import googlemaps
 import pyodbc
 
-from .creds import GMAPS_API_KEY
 from .gtechna import Gtechna
+from .creds import GEOCODIO_API_KEY
+
+GEOCODE_URL = "https://api.geocod.io/v1.6/geocode?q={addr}&fields=census&api_key=" + GEOCODIO_API_KEY
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',
@@ -40,36 +42,56 @@ class CitationData(Gtechna):
         """
         Pulls the latitude and longitude of an address, either from the internet, or the cached version
         :param street_address: Address to search. Can be anything that would be searched on google maps.
-        :return: Dictionary with the keys 'Latitude', 'Longitude', 'Street Address', 'Street Num', 'Street Name',
-        'Neighborhood'
+        :return: Dictionary with the keys Block_Start, Street_Name, Census_Tract, Street_Address, Block_Start,
+        Block_End, Street_Dir, Street_Name, Suffix_Type, Suffix_Direction, Suffix_Qualifier, City, GeoState, Zip,
+        Latitude, Longitude
         """
-        gmaps = googlemaps.Client(key=GMAPS_API_KEY)
-
         if not self.cached_geo.get(street_address):
-            logging.info("Get address %s", street_address)
-            geocode_result = gmaps.geocode(street_address)
+            ret = self._geocode(street_address)
 
-            if len(geocode_result) > 1:
-                logging.warning("Got more than one result for %s: %s", street_address, geocode_result)
-
-            geocode_result = geocode_result[0]
-
-            ret = {'Latitude': geocode_result["geometry"]["location"]["lat"],
-                   'Longitude': geocode_result["geometry"]["location"]["lng"],
-                   'Street Address': geocode_result["formatted_address"], "Street Num": "", "Street Name": "",
-                   "Neighborhood": ""}
-
-            for component in geocode_result["address_components"]:
-                if "street_number" in component["types"]:
-                    ret["Street Num"] = component["short_name"]
-                elif "route" in component["types"]:
-                    ret["Street Name"] = component["short_name"]
-                if "neighborhood" in component["types"]:
-                    ret["Neighborhood"] = component["short_name"]
-
+            # Save as both the original formatted address, and the reformatted version
             self.cached_geo[street_address] = ret
-            return ret
+            self.cached_geo[ret["Street Address"]] = ret
+
         return self.cached_geo.get(street_address)
+
+    @staticmethod
+    def _geocode(street_address):
+        ret = {"Latitude": "", "Longitude": "", "Street Address": "", "Street Num": "", "Street Name": "",
+               "City": "", "GeoState": "", "Zip": "", "Census Tract": ""}
+
+        logging.info("Get address %s", street_address)
+        req = requests.get(GEOCODE_URL.format(addr=street_address))
+
+        try:
+            geocode_result = req.json()["results"]
+        except json.JSONDecodeError:
+            logging.error("JSON ERROR: %s", req)
+            return ret
+
+        if len(geocode_result) > 1:
+            logging.warning("Multiple results for %s.\n\nResults: %s", street_address, geocode_result)
+        elif len(geocode_result) == 0:
+            logging.error("No results for %s.\n\nResults: %s", street_address, geocode_result)
+            return ret
+        geocode_result = geocode_result[0]
+
+        try:
+            census_year = next(iter(geocode_result["fields"]["census"].keys()))
+
+            ret = {"Latitude": geocode_result["location"]["lat"],
+                   "Longitude": geocode_result["location"]["lng"],
+                   "Street Address": geocode_result["formatted_address"],
+                   "Street Num": geocode_result["address_components"].get("number"),
+                   "Street Name": geocode_result["address_components"].get("formatted_street"),
+                   "City": geocode_result["address_components"]["city"],
+                   "GeoState": geocode_result["address_components"]["state"],
+                   "Zip": geocode_result["address_components"]["zip"],
+                   "Census Tract": geocode_result["fields"]["census"][census_year]["tract_code"]}
+        except IndexError:
+            return ret
+
+        return ret
 
     def enrich_data(self):
         """
@@ -81,7 +103,7 @@ class CitationData(Gtechna):
             """Rounds a street address number to the block number"""
             if int(num) < 100 or num == '':
                 return 1
-            return int(math.floor(int(num) / 100) * 100)
+            return round(num, 2)
 
         processed_data = []
         for row in self.data:
@@ -123,23 +145,26 @@ class CitationData(Gtechna):
             [Ticket_No] [varchar](100) NULL,
             [Status] [varchar](4) NULL,
             [Plate] [varchar](20) NULL,
-            [State] [varchar](4) NULL,
+            [Plate_State] [varchar](4) NULL,
             [Officer_Badge_No] [varchar](max) NULL,
             [Officer_Name] [varchar](100) NULL,
             [Squad] [varchar](max) NULL,
             [Post] [varchar](max) NULL,
             [Violation_Code] [smallint] NULL,
-            [Infraction_Text] [varchar](80) NULL,
+            [Infraction_Text] [nvarchar](80) NULL,
             [Fine] [real] NULL,
             [ClientId] [varchar](20) NULL,
             [Server] [varchar](max) NULL,
             [Software] [varchar](24) NULL,
             [Export_Date] [datetime2] NULL,
             [Infraction_Datetime] [datetime2] NULL,
-            [Street_No] [varchar](20) NULL,
-            [Street_Name] [varchar](50) NULL,
-            [Neighborhood] [varchar](max) NULL,
-            [Street_Address] [varchar](100) NULL,
+            [Census_Tract] [varchar](20) NULL,
+            [Street_Address] [nvarchar](100) NULL,
+            [Street_Num] varchar(10) NULL,
+            [Street_Name] varchar(MAX) NULL,
+            [City] varchar(50) NULL,
+            [State] varchar(2) NULL,
+            [Zip] varchar(5) NULL,
             [Latitude] [real] NULL,
             [Longitude] [real] NULL
             )""")
@@ -154,9 +179,9 @@ class CitationData(Gtechna):
             insert_data.append((row['Ticket #'], row['Status'], row['Plate'], row['State'], row['Officer Badge No'],
                                 row['Officer Name'], row['Squad'], row['Post'], row['violation Code'],
                                 row['Infraction Text'], row['Fine'], row['Client Id'], row['Server'], row['Software'],
-                                row['Export Date'], row['Infraction Datetime'], row['Street Num'],
-                                row['Street Name'], row['Neighborhood'], row['Street Address'], row['Latitude'],
-                                row['Longitude']))
+                                row['Export Date'], row['Infraction Datetime'], row['Census Tract'],
+                                row['Street Address'], row['Street Num'], row['Street Name'], row['City'],
+                                row['GeoState'], row['Zip'], row['Latitude'], row['Longitude']))
 
         if len(insert_data) == 0:
             print("No results for {}".format(search_date))
@@ -166,18 +191,18 @@ class CitationData(Gtechna):
             MERGE ticketstat USING (
             VALUES
                 (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ) AS vals (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post, Violation_Code,
-            Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime, Street_No,
-            Street_Name, Neighborhood, Street_Address, Latitude, Longitude)
+            ) AS vals (Ticket_No, Status, Plate, Plate_State, Officer_Badge_No, Officer_Name, Squad, Post,
+            Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime,
+            Census_Tract, Street_Address, Street_Num, Street_Name, City, State, Zip, Latitude, Longitude)
             ON (ticketstat.Ticket_No = vals.Ticket_No AND
                 ticketstat.Violation_Code = vals.Violation_Code)
             WHEN NOT MATCHED THEN
-                INSERT (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
-                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
-                    Infraction_Datetime, Street_No, Street_Name, Neighborhood, Street_Address, Latitude, Longitude)
-                VALUES (Ticket_No, Status, Plate, State, Officer_Badge_No, Officer_Name, Squad, Post,
-                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date,
-                    Infraction_Datetime, Street_No, Street_Name, Neighborhood, Street_Address, Latitude, Longitude);
-            """, insert_data)
+                INSERT (Ticket_No, Status, Plate, Plate_State, Officer_Badge_No, Officer_Name, Squad, Post,
+                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime,
+                    Census_Tract, Street_Address, Street_Num, Street_Name, City, State, Zip, Latitude, Longitude)
+                VALUES (Ticket_No, Status, Plate, Plate_State, Officer_Badge_No, Officer_Name, Squad, Post,
+                    Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime,
+                    Census_Tract, Street_Address, Street_Num, Street_Name, City, State, Zip, Latitude, Longitude);""",
+                           insert_data)
 
         cursor.commit()

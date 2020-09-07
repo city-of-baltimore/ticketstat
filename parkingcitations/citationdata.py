@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import pickle
+import re
 import requests
 
 import pyodbc
+from tqdm import tqdm
 
 from .gtechna import Gtechna
 from .creds import GEOCODIO_API_KEY
@@ -38,16 +40,30 @@ class CitationData(Gtechna):
         with open(self.pickle_filename, 'wb') as proc_files:
             pickle.dump(self.cached_geo, proc_files)
 
+    @staticmethod
+    def _standardize_address(street_address):
+        street_address = street_address.upper()
+        street_address = re.sub(r'^(\d*) N\.? (.*)', r'\1 NORTH \2', street_address)
+        street_address = re.sub(r'^(\d*) S\.? (.*)', r'\1 SOUTH \2', street_address)
+        street_address = re.sub(r'^(\d*) E\.? (.*)', r'\1 EAST \2', street_address)
+        street_address = re.sub(r'^(\d*) W\.? (.*)', r'\1 WEST \2', street_address)
+        street_address = street_address.replace('LOT', '').replace('ALLEY', '')
+
+        return street_address
+
     def geocode(self, street_address) -> dict:
         """
         Pulls the latitude and longitude of an address, either from the internet, or the cached version
         :param street_address: Address to search. Can be anything that would be searched on google maps.
         :return: Dictionary with the keys Block_Start, Street_Name, Census_Tract, Street_Address, Block_Start,
         Block_End, Street_Dir, Street_Name, Suffix_Type, Suffix_Direction, Suffix_Qualifier, City, GeoState, Zip,
-        Latitude, Longitude
+        Latitude, Longitude. If there is an error in the lookup, then it returns None
         """
+        street_address = self._standardize_address(street_address)
         if not self.cached_geo.get(street_address):
             ret = self._geocode(street_address)
+            if ret is None:
+                return None
 
             # Save as both the original formatted address, and the reformatted version
             self.cached_geo[street_address] = ret
@@ -57,9 +73,6 @@ class CitationData(Gtechna):
 
     @staticmethod
     def _geocode(street_address):
-        ret = {"Latitude": "", "Longitude": "", "Street Address": "", "Street Num": "", "Street Name": "",
-               "City": "", "GeoState": "", "Zip": "", "Census Tract": ""}
-
         logging.info("Get address %s", street_address)
         req = requests.get(GEOCODE_URL.format(addr=street_address))
 
@@ -67,14 +80,25 @@ class CitationData(Gtechna):
             geocode_result = req.json()["results"]
         except json.JSONDecodeError:
             logging.error("JSON ERROR: %s", req)
-            return ret
+            return None
 
         if len(geocode_result) > 1:
-            logging.warning("Multiple results for %s.\n\nResults: %s", street_address, geocode_result)
+            logging.debug("Multiple results for %s.\n\nResults: %s", street_address, geocode_result)
+            geocode_result = None
+
+            for res in req.json()["results"]:
+                if res["address_components"]["county"].lower() == "baltimore city":
+                    geocode_result = res
+                    break
+
+            if geocode_result is None:
+                return None
+
         elif len(geocode_result) == 0:
             logging.error("No results for %s.\n\nResults: %s", street_address, geocode_result)
-            return ret
-        geocode_result = geocode_result[0]
+            return None
+        else:
+            geocode_result = geocode_result[0]
 
         try:
             census_year = next(iter(geocode_result["fields"]["census"].keys()))
@@ -89,7 +113,7 @@ class CitationData(Gtechna):
                    "Zip": geocode_result["address_components"]["zip"],
                    "Census Tract": geocode_result["fields"]["census"][census_year]["tract_code"]}
         except IndexError:
-            return ret
+            return None
 
         return ret
 
@@ -101,23 +125,29 @@ class CitationData(Gtechna):
 
         def get_block(num):
             """Rounds a street address number to the block number"""
-            if int(num) < 100 or num == '':
+            if num == '' or int(num) < 100:
                 return 1
-            return round(num, 2)
+            return round(int(num), 2)
 
         processed_data = []
-        for row in self.data:
-            streetnum = get_block(row.pop('Civic #', 1))
+        for row in tqdm(self.data):
+            street_num = get_block(row.pop('Civic #', 1))
             direction = row.pop('Direction', '')
             street = row.pop('Street', '')
+            if not street:
+                continue
+
             infraction_datetime = "{} {}".format(row.pop('Infraction Date', ''), row.pop('Creation Time', ''))
             row['Infraction Datetime'] = infraction_datetime
 
-            street_addr = "{num} {dir}{street}".format(num=streetnum if streetnum != '0' else 1,
+            street_addr = "{num} {dir}{street}".format(num=street_num if street_num != '0' else 1,
                                                        dir="{} ".format(direction) if direction else "",
                                                        street=street)
             address = "{}, Baltimore, Maryland".format(street_addr)
             geo = self.geocode(address)
+            if geo is None or geo['Latitude'] is None or geo['Longitude'] is None:
+                logging.warning("No geocode result for %s", address)
+                continue
 
             if geo['Latitude'] < 39.1 or geo['Latitude'] > 39.4 or geo['Longitude'] > -76.5 or geo['Longitude'] < -76.8:
                 logging.warning("Got lat/long from outside Baltimore City: %s/%s", geo['Latitude'], geo['Longitude'])
@@ -172,6 +202,11 @@ class CitationData(Gtechna):
             cursor.commit()
 
         self.get_results_by_date(search_date)
+
+        if self.data is None:
+            logging.error("No results to insert")
+            return
+
         self.enrich_data()
 
         insert_data = []
@@ -184,13 +219,13 @@ class CitationData(Gtechna):
                                 row['GeoState'], row['Zip'], row['Latitude'], row['Longitude']))
 
         if len(insert_data) == 0:
-            print("No results for {}".format(search_date))
+            logging.error("No results for {}".format(search_date))
             return
 
         cursor.executemany("""
             MERGE ticketstat USING (
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ) AS vals (Ticket_No, Status, Plate, Plate_State, Officer_Badge_No, Officer_Name, Squad, Post,
             Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime,
             Census_Tract, Street_Address, Street_Num, Street_Name, City, State, Zip, Latitude, Longitude)

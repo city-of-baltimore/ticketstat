@@ -7,6 +7,7 @@ out that would need to be done.
 import csv
 import io
 import requests
+from retrying import retry
 
 
 class Gtechna:
@@ -72,7 +73,7 @@ class Gtechna:
         104 - IS NOT NULL
         102- NOT CONTAINS
         201- IS NULL
-        :return:
+        :return: No return, but it sets self.data to the returned data
         """
         datatype = []
         operators = []
@@ -100,7 +101,11 @@ class Gtechna:
         result_lookup = {'csv': self._get_results_csv}
         assert filetype in result_lookup.keys(), "Valid file types are {}".format(result_lookup.keys())
 
-        self.data = result_lookup[filetype](data)
+        try:
+            self.data = result_lookup[filetype](data)
+        except (StopIteration, KeyError):
+            # We have the retry, but sometimes there are just no results
+            pass
 
     def get_results_by_date(self, date):
         """
@@ -110,9 +115,17 @@ class Gtechna:
         """
         self.search('csv', ('TICKETVIEW.INFRACTIONDATE', '1', date.strftime("%m/%d/%Y")))
 
+    @retry(stop_max_attempt_number=7,
+           wait_exponential_multiplier=1000,
+           wait_exponential_max=10000)
     def _get_results_csv(self, data: dict) -> csv.DictReader:
         data['d-2698956-e'] = 1  # csv mode
         csv_text = self._get_results(data)
+
+        # Validates that the response is valid by checking the first element for the ticket number. Otherwise, a
+        # keyerror is thrown and the retrying logic kicks in
+        next(csv.DictReader(io.StringIO(csv_text.text)))['Ticket #']
+
         return csv.DictReader(io.StringIO(csv_text.text))
 
     def _get_results(self, data):

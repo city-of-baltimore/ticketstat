@@ -186,7 +186,7 @@ class CitationData(Gtechna):
             [ClientId] [varchar](20) NULL,
             [Server] [varchar](max) NULL,
             [Software] [varchar](24) NULL,
-            [Export_Date] [datetime2] NULL,
+            [Export_Date] [date] NULL,
             [Infraction_Datetime] [datetime2] NULL,
             [Census_Tract] [varchar](20) NULL,
             [Street_Address] [nvarchar](100) NULL,
@@ -231,6 +231,33 @@ class CitationData(Gtechna):
             Census_Tract, Street_Address, Street_Num, Street_Name, City, State, Zip, Latitude, Longitude)
             ON (ticketstat.Ticket_No = vals.Ticket_No AND
                 ticketstat.Violation_Code = vals.Violation_Code)
+            WHEN MATCHED THEN
+                UPDATE SET
+                Ticket_No = vals.Ticket_No,
+                Status = vals.Status,
+                Plate = vals.Plate,
+                Plate_State = vals.Plate_State,
+                Officer_Badge_No = vals.Officer_Badge_No,
+                Officer_Name = vals.Officer_Name,
+                Squad = vals.Squad,
+                Post = vals.Post,
+                Violation_Code = vals.Violation_Code,
+                Infraction_Text = vals.Infraction_Text,
+                Fine = vals.Fine,
+                ClientId = vals.ClientId,
+                Server = vals.Server,
+                Software = vals.Software,
+                Export_Date = vals.Export_Date,
+                Infraction_Datetime = vals.Infraction_Datetime,
+                Census_Tract = vals.Census_Tract,
+                Street_Address = vals.Street_Address,
+                Street_Num = vals.Street_Num,
+                Street_Name = vals.Street_Name,
+                City = vals.City,
+                State = vals.State,
+                Zip = vals.Zip,
+                Latitude = vals.Latitude,
+                Longitude = vals.Longitude
             WHEN NOT MATCHED THEN
                 INSERT (Ticket_No, Status, Plate, Plate_State, Officer_Badge_No, Officer_Name, Squad, Post,
                     Violation_Code, Infraction_Text, Fine, ClientId, Server, Software, Export_Date, Infraction_Datetime,

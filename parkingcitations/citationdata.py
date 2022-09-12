@@ -167,7 +167,7 @@ class CitationData(Gtechna):
         :param search_date: (datetime.date) Date to query from Gtechna and insert into the database
         :param create_table: (bool) Create ticketstat database if true
         """
-        conn = pyodbc.connect(r'Driver={SQL Server};Server=balt-sql311-prd;Database=DOT_DATA;Trusted_Connection=yes;')
+        conn = pyodbc.connect(r'Driver={ODBC Driver 17 for SQL Server};Server=balt-sql311-prd;Database=DOT_DATA;Trusted_Connection=yes;')
         cursor = conn.cursor()
 
         if create_table:
